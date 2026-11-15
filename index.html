@@ -171,10 +171,12 @@ function saveDec(){
 function prune(){
   if (!S.data) return;
   var ids={}, fav={}; S.data.vacancies.forEach(function(v){ ids[v.id]=1; }); (S.data.fav||[]).forEach(function(id){ fav[id]=1; });
-  Object.keys(S.dec).forEach(function(id){ var d=S.dec[id]; if ((d==="f"&&fav[id]) || (d==="s"&&!ids[id])) delete S.dec[id]; });
+  var ap={}; (S.data.applied||[]).forEach(function(id){ ap[id]=1; });
+  Object.keys(S.dec).forEach(function(id){ var d=S.dec[id]; if ((d==="f"&&fav[id]) || (d==="s"&&!ids[id]) || (d==="a"&&(ap[id]||!ids[id]))) delete S.dec[id]; });
 }
 function favIds(){ var f={}; (S.data.fav||[]).forEach(function(id){ f[id]=1; }); Object.keys(S.dec).forEach(function(id){ if(S.dec[id]==="f") f[id]=1; else delete f[id]; }); return f; }
-function queue(){ var f=favIds(); return S.data.vacancies.filter(function(v){ return !f[v.id] && !S.dec[v.id]; }); }
+function isApplied(id){ return S.dec[id]==="a" || (S.data.applied||[]).indexOf(id)>=0; }
+function queue(){ var f=favIds(); return S.data.vacancies.filter(function(v){ return !f[v.id] && !S.dec[v.id] && !isApplied(v.id); }); }
 function pending(){ return Object.keys(S.dec).length; }
 
 /* ---------- отправка в бота ---------- */
@@ -227,7 +229,10 @@ function renderMatch(){
 }
 function item(v, withRemove){
   var row=h("div",{class:"row"}); contactsNode(v,row);
-  if (withRemove) row.append(h("button",{type:"button",text:"Убрать",onclick:function(){ S.dec[v.id]="s"; saveDec(); haptic("light"); toast("Убрано из избранного и из базы"); renderAll(); }}));
+  if (withRemove){
+    row.append(h("button",{type:"button",text:"Я откликнулся",style:"color:var(--good)",onclick:function(){ S.dec[v.id]="a"; saveDec(); haptic("medium"); toast("Отмечено: отклик отправлен"); renderAll(); }}));
+    row.append(h("button",{type:"button",text:"Убрать",onclick:function(){ S.dec[v.id]="s"; saveDec(); haptic("light"); toast("Убрано из избранного и из базы"); renderAll(); }}));
+  }
   return h("div",{class:"item glass"},[ h("div",{class:"m",text:[v.source==="hh"?"hh.ru":str(v.sourceName),fmt(v.postedAt)].filter(Boolean).join(" · ")}),
     h("div",{class:"t",text:v.title||"Без названия"}), h("div",{class:"m",text:[v.company,v.salary,v.format].filter(Boolean).join(" · ")}),
     v.desc ? h("details",{},[h("summary",{text:"Описание"}),h("p",{text:v.desc})]) : null, row ]);
@@ -236,9 +241,10 @@ function renderLists(){
   var f=favIds(), fav=S.data.vacancies.filter(function(v){ return f[v.id]; });
   $("n-fav").textContent=fav.length||""; var box=$("fav"); box.textContent="";
   if (!fav.length) box.append(h("div",{class:"empty",style:"height:60vh"},[h("b",{text:"Пока пусто"}),h("span",{text:"Смахните вакансию вправо в МЭТЧ — она появится здесь."})]));
+  if (fav.length) box.append(h("p",{class:"note",text:"Сопроводительное письмо для каждой вакансии из избранного приходит в чат с ботом после ближайшего сбора. Отправили отклик — нажмите «Я откликнулся»."}));
   fav.forEach(function(v){ box.append(item(v,true)); });
   if (pending()) box.append(h("p",{class:"note",text: canSend ? "Есть несохранённые решения: нажмите «Сохранить в Радар» внизу." : "Решения сохранены на этом аккаунте Telegram. Чтобы они попали в Радар, откройте приложение кнопкой «Радар» под полем ввода и нажмите «Сохранить»."}));
-  var q=$("q").value.trim().toLowerCase(), all=S.data.vacancies.filter(function(v){ return S.dec[v.id]!=="s" && (!q || (v.title+" "+v.company+" "+v.desc).toLowerCase().indexOf(q)>=0); });
+  var q=$("q").value.trim().toLowerCase(), all=S.data.vacancies.filter(function(v){ return S.dec[v.id]!=="s" && !isApplied(v.id) && (!q || (v.title+" "+v.company+" "+v.desc).toLowerCase().indexOf(q)>=0); });
   $("n-all").textContent=S.data.vacancies.length||""; var ab=$("all"); ab.textContent="";
   if (!all.length) ab.append(h("p",{class:"note",text:"Ничего не найдено."}));
   all.slice(0,200).forEach(function(v){ ab.append(item(v,false)); });
