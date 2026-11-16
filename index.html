@@ -151,20 +151,26 @@ applyTheme();
 var haptic = function(t){ try{ tg && tg.HapticFeedback && (t==="s"?tg.HapticFeedback.selectionChanged():tg.HapticFeedback.impactOccurred(t)); }catch(_){} };
 
 /* ---------- состояние ---------- */
-var S = { data:null, dec:{}, undo:null, busy:false, drag:false };
-var KEY="radar_dec";
-function loadDec(){
+var S = { data:null, dec:{}, sent:{}, undo:null, busy:false, drag:false };
+var KEY="radar_dec", KEY_SENT="radar_sent", BOT="gskwork_bot";
+var hasCS = !!(tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9"));
+function loadKey(key){
   return new Promise(function(ok){
-    var fromLocal=function(){ try{ ok(JSON.parse(localStorage.getItem(KEY)||"{}")); }catch(_){ ok({}); } };
-    if (tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9")){
-      tg.CloudStorage.getItem(KEY,function(err,val){ if(err||!val) fromLocal(); else { try{ ok(JSON.parse(val)); }catch(_){ fromLocal(); } } });
-    } else fromLocal();
+    var fromLocal=function(){ try{ ok(JSON.parse(localStorage.getItem(key)||"{}")); }catch(_){ ok({}); } };
+    if (hasCS) tg.CloudStorage.getItem(key,function(err,val){ if(err||!val) fromLocal(); else { try{ ok(JSON.parse(val)); }catch(_){ fromLocal(); } } });
+    else fromLocal();
   });
 }
-function saveDec(){
-  var s = JSON.stringify(S.dec);
-  try{ localStorage.setItem(KEY,s); }catch(_){}
-  if (tg && tg.CloudStorage && tg.isVersionAtLeast && tg.isVersionAtLeast("6.9") && s.length<4000){ try{ tg.CloudStorage.setItem(KEY,s); }catch(_){} }
+function loadDec(){ return Promise.all([loadKey(KEY),loadKey(KEY_SENT)]).then(function(r){ S.sent=r[1]||{}; return r[0]; }); }
+function saveKey(key,obj,cb){
+  var s=JSON.stringify(obj); try{ localStorage.setItem(key,s); }catch(_){}
+  if (hasCS && s.length<4000){ try{ tg.CloudStorage.setItem(key,s,function(){ cb&&cb(); }); return; }catch(_){} }
+  cb&&cb();
+}
+function saveDec(cb){
+  Object.keys(S.sent).forEach(function(id){ if(!(id in S.dec)) delete S.sent[id]; });
+  var left=2, done=function(){ if(--left===0&&cb) cb(); };
+  saveKey(KEY,S.dec,done); saveKey(KEY_SENT,S.sent,done);
   updateMainButton();
 }
 /* решение уже учтено в данных, если вакансия в избранном (f) или её уже нет в выгрузке (s) */
@@ -177,20 +183,34 @@ function prune(){
 function favIds(){ var f={}; (S.data.fav||[]).forEach(function(id){ f[id]=1; }); Object.keys(S.dec).forEach(function(id){ if(S.dec[id]==="f") f[id]=1; else delete f[id]; }); return f; }
 function isApplied(id){ return S.dec[id]==="a" || (S.data.applied||[]).indexOf(id)>=0; }
 function queue(){ var f=favIds(); return S.data.vacancies.filter(function(v){ return !f[v.id] && !S.dec[v.id] && !isApplied(v.id); }); }
-function pending(){ return Object.keys(S.dec).length; }
+function unsent(){ return Object.keys(S.dec).filter(function(id){ return S.sent[id]!==S.dec[id]; }); }
+function pending(){ return unsent().length; }
 
 /* ---------- отправка в бота ---------- */
+/* кнопка «Радар» под полем ввода → sendData; любой другой запуск → ссылка t.me/<бот>?start=r<решения> (до 15 за раз) */
 var canSend = !!(tg && tg.initData && !(tg.initDataUnsafe && tg.initDataUnsafe.query_id));
+var canLink = !!(tg && tg.openTelegramLink);
+function codeOf(id){ var v=S.data&&S.data.vacancies.filter(function(x){ return x.id===id; })[0]; return v&&v.k&&/^[0-9a-z]{3}$/.test(v.k)?v.k:null; }
 function updateMainButton(){
   if (!tg || !tg.MainButton) return;
   var n = pending();
-  if (n && canSend){ tg.MainButton.setParams({text:"Сохранить в Радар ("+n+")",is_visible:true}); }
+  if (n && (canSend||canLink)){ tg.MainButton.setParams({text:"Сохранить в Радар ("+n+")",is_visible:true}); }
   else tg.MainButton.hide();
 }
 if (tg && tg.MainButton){ tg.MainButton.onClick(function(){
-  var payload = JSON.stringify({v:1,d:S.dec});
-  if (payload.length>4000){ var d={},k=Object.keys(S.dec); for(var i=0;i<k.length;i++){ d[k[i]]=S.dec[k[i]]; if(JSON.stringify({v:1,d:d}).length>3900) { delete d[k[i]]; break; } } payload=JSON.stringify({v:1,d:d}); }
-  haptic("medium"); tg.sendData(payload);
+  var ids=unsent(); if(!ids.length) return; haptic("medium");
+  if (canSend){
+    var d={}; ids.forEach(function(id){ d[id]=S.dec[id]; });
+    var payload=JSON.stringify({v:1,d:d});
+    if (payload.length>4000){ d={}; for(var i=0;i<ids.length;i++){ d[ids[i]]=S.dec[ids[i]]; if(JSON.stringify({v:1,d:d}).length>3900){ delete d[ids[i]]; break; } } payload=JSON.stringify({v:1,d:d}); }
+    Object.keys(d).forEach(function(id){ S.sent[id]=d[id]; });
+    saveDec(function(){ tg.sendData(payload); });
+    return;
+  }
+  var p="r", used=[];
+  for (var j=0;j<ids.length&&p.length<=60;j++){ var k=codeOf(ids[j]); if(!k){ S.sent[ids[j]]=S.dec[ids[j]]; continue; } p+=S.dec[ids[j]]+k; used.push(ids[j]); }
+  used.forEach(function(id){ S.sent[id]=S.dec[id]; });
+  saveDec(function(){ if(used.length) tg.openTelegramLink("https://t.me/"+BOT+"?start="+p); else toast("Нечего отправлять"); });
 }); }
 
 /* ---------- отрисовка ---------- */
@@ -223,7 +243,7 @@ function renderMatch(){
   $("n-match").textContent = q.length||""; $("b-undo").disabled=!S.undo;
   $("b-no").disabled = $("b-yes").disabled = !q.length;
   if (!q.length){ deck.append(h("div",{class:"empty"},[h("b",{text:"Всё разобрано"}),
-    h("span",{text: pending()&&!canSend ? "Чтобы решения попали в Радар, откройте приложение кнопкой «Радар» под полем ввода в чате и нажмите «Сохранить»." : "Новые вакансии появятся после ближайшего сбора — в 9:13 и 15:13 по Москве."})])); return; }
+    h("span",{text: pending() ? "Нажмите «Сохранить в Радар» внизу, чтобы решения ушли в дашборд." : "Новые вакансии появятся после ближайшего сбора — в 9:13 и 15:13 по Москве."})])); return; }
   if (q[1]) deck.append(card(q[1],"back"));
   var c=card(q[0],"top"); deck.append(c); drag(c,q[0]);
 }
@@ -243,7 +263,7 @@ function renderLists(){
   if (!fav.length) box.append(h("div",{class:"empty",style:"height:60vh"},[h("b",{text:"Пока пусто"}),h("span",{text:"Смахните вакансию вправо в МЭТЧ — она появится здесь."})]));
   if (fav.length) box.append(h("p",{class:"note",text:"Сопроводительное письмо для каждой вакансии из избранного приходит в чат с ботом после ближайшего сбора. Отправили отклик — нажмите «Я откликнулся»."}));
   fav.forEach(function(v){ box.append(item(v,true)); });
-  if (pending()) box.append(h("p",{class:"note",text: canSend ? "Есть несохранённые решения: нажмите «Сохранить в Радар» внизу." : "Решения сохранены на этом аккаунте Telegram. Чтобы они попали в Радар, откройте приложение кнопкой «Радар» под полем ввода и нажмите «Сохранить»."}));
+  if (pending()) box.append(h("p",{class:"note",text:"Есть несохранённые решения: нажмите «Сохранить в Радар» внизу. Дашборд обновится при ближайшем сборе."}));
   var q=$("q").value.trim().toLowerCase(), all=S.data.vacancies.filter(function(v){ return S.dec[v.id]!=="s" && !isApplied(v.id) && (!q || (v.title+" "+v.company+" "+v.desc).toLowerCase().indexOf(q)>=0); });
   $("n-all").textContent=S.data.vacancies.length||""; var ab=$("all"); ab.textContent="";
   if (!all.length) ab.append(h("p",{class:"note",text:"Ничего не найдено."}));
