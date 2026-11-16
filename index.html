@@ -265,7 +265,7 @@ function renderLists(){
   fav.forEach(function(v){ box.append(item(v,true)); });
   if (pending()) box.append(h("p",{class:"note",text:"Есть несохранённые решения: нажмите «Сохранить в Радар» внизу. Дашборд обновится при ближайшем сборе."}));
   var q=$("q").value.trim().toLowerCase(), all=S.data.vacancies.filter(function(v){ return S.dec[v.id]!=="s" && !isApplied(v.id) && (!q || (v.title+" "+v.company+" "+v.desc).toLowerCase().indexOf(q)>=0); });
-  $("n-all").textContent=S.data.vacancies.length||""; var ab=$("all"); ab.textContent="";
+  $("n-all").textContent=(typeof S.data.total==="number"?S.data.total:S.data.vacancies.length)||""; var ab=$("all"); ab.textContent="";
   if (!all.length) ab.append(h("p",{class:"note",text:"Ничего не найдено."}));
   all.slice(0,200).forEach(function(v){ ab.append(item(v,false)); });
 }
